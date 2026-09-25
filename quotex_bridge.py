@@ -190,32 +190,35 @@ async def websocket_feed(ws: WebSocket):
                 await ws.send_json({"type": "assets", "data": payouts})
 
             elif req_type == "subscribe":
-                # Client wants to stream a specific asset
                 raw_asset = str(request.get("symbol", "EURUSD")).replace("/", "").upper()
                 timeframe = int(request.get("timeframe", 60))
                 
-                # Define a background task so we don't block the WebSocket loop
                 async def handle_subscription(websocket, asset, tf):
+                    # 1. Add a random small delay (0.1s to 2.0s) so multiple requests don't hit at the exact same millisecond
+                    import random
+                    await asyncio.sleep(random.uniform(0.1, 2.0))
+                    
                     client = await bridge.get_client()
                     
-                    # Fetch history (snapshot)
+                    # 2. Fetch history gracefully
                     try:
                         history = await client.get_candles(asset, time.time(), tf * 199, tf)
                         snapshot = normalize_candles(history)
                     except Exception as e:
                         logger.warning(f"Timeout fetching history for {asset}. Sending empty snapshot.")
-                        snapshot = []  # Fallback to empty
+                        snapshot = []
                     
-                    # Send snapshot to client
+                    # 3. Send snapshot to client
                     try:
                         await websocket.send_json({"type": "snapshot", "symbol": asset, "candles": snapshot})
                     except:
-                        pass # Ignore if client already disconnected
+                        pass 
                         
-                    # Start Real-Time streaming
+                    # 4. Add another tiny delay before starting the live stream
+                    await asyncio.sleep(0.5)
                     await bridge.subscribe(websocket, asset, tf)
 
-                # Fire and forget! (Runs the above function in the background)
+                # Run in background, but with built-in speed bumps
                 asyncio.create_task(handle_subscription(ws, raw_asset, timeframe))
                 subscribed_assets.add(raw_asset)
 
