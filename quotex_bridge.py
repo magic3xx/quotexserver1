@@ -81,12 +81,35 @@ class BridgeManager:
         """Fetches all open assets and their payout percentages."""
         client = await self.get_client()
         try:
-            # get_payment() returns a boolean and a dictionary of { "Asset": Payout_Percentage }
-            ok, payouts = await client.get_payment()
-            if ok:
-                return payouts
+            # 1. Force the client to fetch the latest market instruments if empty
+            if not client.api.instruments:
+                await client.api.get_instruments()
+                await asyncio.sleep(2) # Give it 2 seconds to download from Quotex
+            
+            import inspect
+            
+            # 2. Call the function
+            call_result = client.get_payment()
+            
+            # 3. Check if it needs to be awaited
+            if inspect.isawaitable(call_result):
+                result = await call_result
+            else:
+                result = call_result
+            
+            # 4. Parse the result
+            payouts = {}
+            if isinstance(result, tuple) and len(result) == 2:
+                payouts = result[1]
+            elif isinstance(result, dict):
+                payouts = result
+                
+            logger.info(f"Successfully fetched {len(payouts)} payouts from Quotex.")
+            return payouts
+            
         except Exception as e:
             logger.error(f"Error fetching payouts: {e}")
+            
         return {}
 
     async def subscribe(self, ws: WebSocket, asset: str, timeframe: int):
