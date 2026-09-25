@@ -54,8 +54,11 @@ class BridgeManager:
     def __init__(self):
         self.client = None
         self.client_lock = asyncio.Lock()
-        self.subscribers = {}      # Format: { "EURUSD": set(websocket1, websocket2) }
-        self.active_streams = {}   # Format: { "EURUSD": asyncio.Task }
+        self.subscribers = {}      
+        self.active_streams = {}   
+        
+        # ADD THIS LINE: Only allow 2 history requests to Quotex at the exact same time
+        self.history_semaphore = asyncio.Semaphore(2)
 
     async def get_client(self):
         async with self.client_lock:
@@ -194,31 +197,29 @@ async def websocket_feed(ws: WebSocket):
                 timeframe = int(request.get("timeframe", 60))
                 
                 async def handle_subscription(websocket, asset, tf):
-                    # 1. Add a random small delay (0.1s to 2.0s) so multiple requests don't hit at the exact same millisecond
-                    import random
-                    await asyncio.sleep(random.uniform(0.1, 2.0))
-                    
                     client = await bridge.get_client()
                     
-                    # 2. Fetch history gracefully
+                    # 1. Use the Semaphore (Traffic Light) to prevent spamming Quotex
                     try:
-                        history = await client.get_candles(asset, time.time(), tf * 199, tf)
-                        snapshot = normalize_candles(history)
+                        async with bridge.history_semaphore:
+                            # Wait 0.5s between each batch to be safe
+                            await asyncio.sleep(0.5)
+                            history = await client.get_candles(asset, time.time(), tf * 199, tf)
+                            snapshot = normalize_candles(history)
                     except Exception as e:
-                        logger.warning(f"Timeout fetching history for {asset}. Sending empty snapshot.")
+                        # If Quotex still times out, we catch it quietly
                         snapshot = []
                     
-                    # 3. Send snapshot to client
+                    # 2. Send snapshot to client
                     try:
                         await websocket.send_json({"type": "snapshot", "symbol": asset, "candles": snapshot})
                     except:
                         pass 
                         
-                    # 4. Add another tiny delay before starting the live stream
-                    await asyncio.sleep(0.5)
+                    # 3. Start the live stream
                     await bridge.subscribe(websocket, asset, tf)
 
-                # Run in background, but with built-in speed bumps
+                # Fire it into the background queue
                 asyncio.create_task(handle_subscription(ws, raw_asset, timeframe))
                 subscribed_assets.add(raw_asset)
 
