@@ -194,21 +194,29 @@ async def websocket_feed(ws: WebSocket):
                 raw_asset = str(request.get("symbol", "EURUSD")).replace("/", "").upper()
                 timeframe = int(request.get("timeframe", 60))
                 
-                client = await bridge.get_client()
-                
-                # Fetch history (snapshot) WITH Error Handling
-                try:
-                    history = await client.get_candles(raw_asset, time.time(), timeframe * 199, timeframe)
-                    snapshot = normalize_candles(history)
-                except Exception as e:
-                    logger.warning(f"Timeout/Error fetching history for {raw_asset}. Sending empty snapshot. ({e})")
-                    snapshot = []  # Fallback to empty snapshot so the bot doesn't crash
-                
-                # Send snapshot to client
-                await ws.send_json({"type": "snapshot", "symbol": raw_asset, "candles": snapshot})
-                
-                # Start Real-Time streaming
-                await bridge.subscribe(ws, raw_asset, timeframe)
+                # Define a background task so we don't block the WebSocket loop
+                async def handle_subscription(websocket, asset, tf):
+                    client = await bridge.get_client()
+                    
+                    # Fetch history (snapshot)
+                    try:
+                        history = await client.get_candles(asset, time.time(), tf * 199, tf)
+                        snapshot = normalize_candles(history)
+                    except Exception as e:
+                        logger.warning(f"Timeout fetching history for {asset}. Sending empty snapshot.")
+                        snapshot = []  # Fallback to empty
+                    
+                    # Send snapshot to client
+                    try:
+                        await websocket.send_json({"type": "snapshot", "symbol": asset, "candles": snapshot})
+                    except:
+                        pass # Ignore if client already disconnected
+                        
+                    # Start Real-Time streaming
+                    await bridge.subscribe(websocket, asset, tf)
+
+                # Fire and forget! (Runs the above function in the background)
+                asyncio.create_task(handle_subscription(ws, raw_asset, timeframe))
                 subscribed_assets.add(raw_asset)
 
             elif req_type == "unsubscribe":
