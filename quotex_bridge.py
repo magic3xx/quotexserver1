@@ -98,11 +98,22 @@ class BridgeManager:
                 result = call_result
             
             # 4. Parse the result
-            payouts = {}
+            raw_payouts = {}
             if isinstance(result, tuple) and len(result) == 2:
-                payouts = result[1]
+                raw_payouts = result[1]
             elif isinstance(result, dict):
-                payouts = result
+                raw_payouts = result
+            
+            # 5. SANITIZE PAYOUTS (The Fix)
+            # Ensure the client gets simple integers instead of nested dictionaries
+            payouts = {}
+            for asset, value in raw_payouts.items():
+                if isinstance(value, (int, float)):
+                    payouts[asset] = int(value)
+                elif isinstance(value, dict):
+                    # Extract the actual payout percentage from PyQuotex's nested dict
+                    pay = value.get("turbo_payment", value.get("payment", value.get("profit", 0)))
+                    payouts[asset] = int(pay)
                 
             logger.info(f"Successfully fetched {len(payouts)} payouts from Quotex.")
             return payouts
