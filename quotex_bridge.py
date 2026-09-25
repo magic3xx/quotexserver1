@@ -196,9 +196,15 @@ async def websocket_feed(ws: WebSocket):
                 
                 client = await bridge.get_client()
                 
-                # Fetch history (snapshot)
-                history = await client.get_candles(raw_asset, time.time(), timeframe * 199, timeframe)
-                snapshot = normalize_candles(history)
+                # Fetch history (snapshot) WITH Error Handling
+                try:
+                    history = await client.get_candles(raw_asset, time.time(), timeframe * 199, timeframe)
+                    snapshot = normalize_candles(history)
+                except Exception as e:
+                    logger.warning(f"Timeout/Error fetching history for {raw_asset}. Sending empty snapshot. ({e})")
+                    snapshot = []  # Fallback to empty snapshot so the bot doesn't crash
+                
+                # Send snapshot to client
                 await ws.send_json({"type": "snapshot", "symbol": raw_asset, "candles": snapshot})
                 
                 # Start Real-Time streaming
